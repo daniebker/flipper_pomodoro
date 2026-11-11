@@ -22,6 +22,7 @@ When a phase ends, the screen lights up and the Flipper vibrates and beeps: two 
 |-------------|--------------------|
 | Up / Down   | Choose Short or Long |
 | OK          | Start the session  |
+| Left        | Open the stats page |
 | Back        | Exit the app       |
 
 **Timer**
@@ -30,14 +31,40 @@ When a phase ends, the screen lights up and the Flipper vibrates and beeps: two 
 |--------|-----------------------------------------|
 | OK     | Pause / resume                          |
 | Right  | Skip to the next phase (counts as done) |
-| Back   | Leave the app (the session keeps going) |
+| Left   | Open the stats page (the timer keeps running) |
+| Back   | Open the leave menu (see below)         |
 | Hold Back | Stop the session and return to the mode menu |
 
 The four dots under the countdown show how many focus intervals you have finished in the current cycle.
 
+## Stats
+
+Press Left on the menu or timer to see your stats; press Left, OK or Back to close them.
+
+| Row           | Meaning |
+|---------------|---------|
+| Total         | Lifetime focus time, and (in brackets) pomodoros completed |
+| Today         | Focus time and pomodoros completed today |
+| Daily average | Lifetime focus time divided by the days since your first session, including days with no focus |
+| Best day      | Most focus time in a single day |
+| Streak        | Consecutive days with at least one completed pomodoro, and your longest streak |
+
+- **Focus time** counts every minute actually spent focusing, including focus intervals you skip or stop part-way; time spent paused doesn't count.
+- **Pomodoros completed** only counts focus intervals that ran to the end. (Skipped ones still count toward the four before a long break.)
+- Focus intervals that finish while the app is closed are counted when you reopen it.
+- Days follow the Flipper's clock and change at local midnight. An interval that crosses midnight counts toward the day it ended.
+- A streak stays alive until a whole day passes with no completed pomodoro.
+- Stats are saved to `apps_data/pomodoro_app/stats.bin` on the SD card. Delete that file to reset them.
+
 ## Leaving and reopening the app
 
-You can press Back to leave the app mid-session and use other apps. When you reopen Pomodoro, the time you were away is deducted from the remaining time, so the countdown shows where the session really is. If you were away longer than the current phase, the app moves on through every phase that ended meanwhile (counting finished focus intervals and long breaks as usual).
+Pressing Back during a session opens a menu:
+
+- **Continue tracking:** close the app and keep the session running in the background (selected by default).
+- **Stop tracking & exit:** end the session and close the app. Any focus time so far is added to your stats.
+- Press **Back** again to return to the timer.
+
+If you choose Continue tracking, you can use other apps. When you reopen Pomodoro, the time you were away is deducted from the remaining time, so the countdown shows where the session really is. If you were away longer than the current phase, the app moves on through every phase that ended meanwhile (counting finished focus intervals and long breaks as usual).
 
 - A **paused** session stays paused while the app is closed and loses no time.
 - The session is saved to `apps_data/pomodoro_app/session.bin` on the SD card and survives a restart.

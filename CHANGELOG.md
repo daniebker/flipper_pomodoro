@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-11
+
+### Added
+
+- Stats page (press Left on the menu or timer): lifetime focus time and pomodoros completed, today's totals, daily average, best day, and current and longest daily streak. Stats are saved to the SD card and include focus intervals that finish while the app is closed.
+
+### Changed
+
+- The on-screen hints now show Left for stats instead of Back to exit.
+
+### Fixed
+
+- There was no visible way to close the app and stop tracking. Back during a session now opens a menu with **Continue tracking** (close the app, session keeps running) and **Stop tracking & exit** (end the session, record focus time so far, close the app).
+
 ## [1.1.0] - 2026-11-11
 
 ### Added
@@ -31,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Vibration, sound and backlight alerts when focus or a break begins.
 - README and MIT license.
 
-[Unreleased]: https://github.com/OWNER/pomodoro_app/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/OWNER/pomodoro_app/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/OWNER/pomodoro_app/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/OWNER/pomodoro_app/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/OWNER/pomodoro_app/releases/tag/v1.0.0

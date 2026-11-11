@@ -39,6 +39,15 @@ static void enter_phase(Pomodoro* p, PomodoroState phase, uint32_t start) {
     p->end_time = start + phase_seconds(p, phase);
 }
 
+/* Report the focus time of a focus interval that is ending with `remaining`
+ * seconds still on the clock. */
+static void report_focus(Pomodoro* p, uint32_t remaining, bool completed, uint32_t at) {
+    if(!p->focus_callback) return;
+    uint32_t full = phase_seconds(p, PomodoroStateFocus);
+    uint32_t focused = remaining < full ? full - remaining : 0;
+    if(focused || completed) p->focus_callback(p->focus_context, focused, completed, at);
+}
+
 /* Move from a finished (or skipped) phase to the next one, starting at `start`. */
 static PomodoroAlert advance(Pomodoro* p, PomodoroState from, uint32_t start) {
     if(from == PomodoroStateFocus) {
@@ -57,6 +66,11 @@ static PomodoroAlert advance(Pomodoro* p, PomodoroState from, uint32_t start) {
 
 void pomodoro_init(Pomodoro* p) {
     *p = (Pomodoro){.state = PomodoroStateSelect, .mode = PomodoroModeShort};
+}
+
+void pomodoro_set_focus_callback(Pomodoro* p, PomodoroFocusCallback callback, void* context) {
+    p->focus_callback = callback;
+    p->focus_context = context;
 }
 
 bool pomodoro_is_running(const Pomodoro* p) {
@@ -131,12 +145,19 @@ PomodoroAlert pomodoro_dispatch(Pomodoro* p, PomodoroEvent event, uint32_t now) 
             p->state = PomodoroStatePaused;
             break;
         case PomodoroEventSkip:
+            if(p->state == PomodoroStateFocus) {
+                report_focus(p, pomodoro_remaining_seconds(p, now), false, now);
+            }
             return advance(p, p->state, now);
         case PomodoroEventExpired:
+            if(p->state == PomodoroStateFocus) report_focus(p, 0, true, p->end_time);
             /* Chain from the scheduled end, not `now`, so catching up after the
              * app was closed keeps every later phase on its real schedule. */
             return advance(p, p->state, p->end_time);
         case PomodoroEventStop:
+            if(p->state == PomodoroStateFocus) {
+                report_focus(p, pomodoro_remaining_seconds(p, now), false, now);
+            }
             p->state = PomodoroStateSelect;
             break;
         default:
@@ -151,8 +172,14 @@ PomodoroAlert pomodoro_dispatch(Pomodoro* p, PomodoroEvent event, uint32_t now) 
             p->end_time = now + p->paused_remaining;
             break;
         case PomodoroEventSkip:
+            if(p->paused_from == PomodoroStateFocus) {
+                report_focus(p, p->paused_remaining, false, now);
+            }
             return advance(p, p->paused_from, now);
         case PomodoroEventStop:
+            if(p->paused_from == PomodoroStateFocus) {
+                report_focus(p, p->paused_remaining, false, now);
+            }
             p->state = PomodoroStateSelect;
             break;
         default:

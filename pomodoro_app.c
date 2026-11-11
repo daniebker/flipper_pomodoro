@@ -6,11 +6,17 @@
 #include <stdio.h>
 
 #include "pomodoro_fsm.h"
+#include "pomodoro_stats.h"
 #include "pomodoro_storage.h"
 
 typedef struct {
     Pomodoro fsm;
-    FuriMutex* mutex; /* guards fsm: the draw callback runs on the GUI thread */
+    PomodoroStats stats;
+    bool stats_dirty; /* stats changed and need saving */
+    bool show_stats; /* stats page is on screen */
+    bool exit_menu_open; /* "leave the app?" menu is on screen */
+    uint8_t exit_choice; /* ExitChoice highlighted in that menu */
+    FuriMutex* mutex; /* guards the fields above: drawing runs on the GUI thread */
     FuriMessageQueue* input_queue;
     ViewPort* view_port;
     Gui* gui;
@@ -42,6 +48,17 @@ static const NotificationSequence sequence_break = {
     &message_sound_off,
     &message_vibro_off,
     NULL,
+};
+
+typedef enum {
+    ExitChoiceContinue, /* leave the app, session keeps running */
+    ExitChoiceStop, /* end the session and close the app */
+    ExitChoiceCount,
+} ExitChoice;
+
+static const char* const exit_choice_labels[ExitChoiceCount] = {
+    [ExitChoiceContinue] = "Continue tracking",
+    [ExitChoiceStop] = "Stop tracking & exit",
 };
 
 static const char* phase_title(PomodoroState phase) {
@@ -89,7 +106,7 @@ static void draw_select(Canvas* canvas, const Pomodoro* p) {
         POMODORO_FOCUS_PER_CYCLE,
         pomodoro_modes[p->mode].long_break_min);
     canvas_draw_str_aligned(canvas, 64, 47, AlignCenter, AlignTop, line);
-    canvas_draw_str_aligned(canvas, 64, 64, AlignCenter, AlignBottom, "OK start   Back exit");
+    canvas_draw_str_aligned(canvas, 64, 64, AlignCenter, AlignBottom, "OK start   < stats");
 }
 
 static void draw_timer(Canvas* canvas, const Pomodoro* p) {
@@ -122,19 +139,95 @@ static void draw_timer(Canvas* canvas, const Pomodoro* p) {
         64,
         AlignCenter,
         AlignBottom,
-        paused ? "OK resume  > skip  Back exit" : "OK pause  > skip  Back exit");
+        paused ? "OK resume  > skip  < stats" : "OK pause  > skip  < stats");
+}
+
+static void draw_exit_menu(Canvas* canvas, uint8_t choice) {
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str_aligned(canvas, 64, 0, AlignCenter, AlignTop, "Leave Pomodoro?");
+
+    canvas_set_font(canvas, FontSecondary);
+    for(int i = 0; i < ExitChoiceCount; i++) {
+        int y = 15 + i * 16;
+        if(i == choice) {
+            canvas_draw_rbox(canvas, 2, y, 124, 14, 3);
+            canvas_set_color(canvas, ColorWhite);
+        }
+        canvas_draw_str_aligned(canvas, 64, y + 7, AlignCenter, AlignCenter, exit_choice_labels[i]);
+        canvas_set_color(canvas, ColorBlack);
+    }
+    canvas_draw_str_aligned(canvas, 64, 64, AlignCenter, AlignBottom, "OK select   Back cancel");
+}
+
+static void format_duration(char* buf, size_t size, uint32_t seconds) {
+    uint32_t minutes = seconds / 60;
+    if(minutes >= 60) {
+        snprintf(buf, size, "%luh %02lum", minutes / 60, minutes % 60);
+    } else {
+        snprintf(buf, size, "%lum", minutes);
+    }
+}
+
+static void draw_stat_row(Canvas* canvas, int row, const char* label, const char* value) {
+    int y = 21 + row * 10;
+    canvas_draw_str(canvas, 2, y, label);
+    canvas_draw_str_aligned(canvas, 126, y, AlignRight, AlignBottom, value);
+}
+
+static void draw_stats(Canvas* canvas, const PomodoroStats* stats) {
+    PomodoroStatsSummary sum;
+    pomodoro_stats_summary(stats, furi_hal_rtc_get_timestamp(), &sum);
+    char dur[16];
+    char value[32];
+
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str_aligned(canvas, 64, 0, AlignCenter, AlignTop, "Stats");
+    canvas_set_font(canvas, FontSecondary);
+
+    format_duration(dur, sizeof(dur), sum.total_seconds);
+    snprintf(value, sizeof(value), "%s (%lu)", dur, sum.total_pomodoros);
+    draw_stat_row(canvas, 0, "Total", value);
+
+    format_duration(dur, sizeof(dur), sum.today_seconds);
+    snprintf(value, sizeof(value), "%s (%lu)", dur, sum.today_pomodoros);
+    draw_stat_row(canvas, 1, "Today", value);
+
+    format_duration(value, sizeof(value), sum.daily_average_seconds);
+    draw_stat_row(canvas, 2, "Daily average", value);
+
+    format_duration(value, sizeof(value), sum.best_day_seconds);
+    draw_stat_row(canvas, 3, "Best day", value);
+
+    snprintf(
+        value,
+        sizeof(value),
+        "%lu day%s (best %lu)",
+        sum.current_streak,
+        sum.current_streak == 1 ? "" : "s",
+        sum.best_streak);
+    draw_stat_row(canvas, 4, "Streak", value);
 }
 
 static void draw_callback(Canvas* canvas, void* ctx) {
     PomodoroApp* app = ctx;
     furi_mutex_acquire(app->mutex, FuriWaitForever);
     canvas_clear(canvas);
-    if(app->fsm.state == PomodoroStateSelect) {
+    if(app->exit_menu_open) {
+        draw_exit_menu(canvas, app->exit_choice);
+    } else if(app->show_stats) {
+        draw_stats(canvas, &app->stats);
+    } else if(app->fsm.state == PomodoroStateSelect) {
         draw_select(canvas, &app->fsm);
     } else {
         draw_timer(canvas, &app->fsm);
     }
     furi_mutex_release(app->mutex);
+}
+
+static void on_focus(void* ctx, uint32_t seconds, bool completed, uint32_t at) {
+    PomodoroApp* app = ctx;
+    pomodoro_stats_record(&app->stats, seconds, completed, at);
+    app->stats_dirty = true;
 }
 
 static void input_callback(InputEvent* event, void* ctx) {
@@ -174,6 +267,12 @@ int32_t pomodoro_app_app(void* p) {
 
     PomodoroApp* app = malloc(sizeof(PomodoroApp));
     pomodoro_init(&app->fsm);
+    pomodoro_set_focus_callback(&app->fsm, on_focus, app);
+    pomodoro_storage_load_stats(&app->stats);
+    app->stats_dirty = false;
+    app->show_stats = false;
+    app->exit_menu_open = false;
+    app->exit_choice = ExitChoiceContinue;
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->input_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
     app->view_port = view_port_alloc();
@@ -191,6 +290,11 @@ int32_t pomodoro_app_app(void* p) {
             pomodoro_storage_save(&app->fsm);
         }
     }
+    /* Focus intervals that finished while the app was closed count too. */
+    if(app->stats_dirty) {
+        pomodoro_storage_save_stats(&app->stats);
+        app->stats_dirty = false;
+    }
 
     bool running = true;
     while(running) {
@@ -198,24 +302,72 @@ int32_t pomodoro_app_app(void* p) {
         PomodoroEvent event;
         /* Wake at least every 250 ms to refresh the countdown and check expiry. */
         bool got_input = furi_message_queue_get(app->input_queue, &input, 250) == FuriStatusOk;
-        bool have_event = got_input && map_input(&input, &event);
 
         furi_mutex_acquire(app->mutex, FuriWaitForever);
+        /* The stats page sits on top of the menu or timer, which keeps running
+         * underneath. Left opens it; Left, Back or OK closes it. */
+        bool short_press = got_input && input.type == InputTypeShort;
+        bool leave = false; /* close the app, session keeps running */
+        bool stop_and_exit = false; /* end the session, then close the app */
+        if(app->exit_menu_open) {
+            if(short_press) {
+                switch(input.key) {
+                case InputKeyUp:
+                case InputKeyDown:
+                    app->exit_choice = (app->exit_choice + 1) % ExitChoiceCount;
+                    break;
+                case InputKeyOk:
+                    app->exit_menu_open = false;
+                    if(app->exit_choice == ExitChoiceStop) {
+                        stop_and_exit = true;
+                    } else {
+                        leave = true;
+                    }
+                    break;
+                case InputKeyBack:
+                    app->exit_menu_open = false; /* cancel: back to the timer */
+                    break;
+                default:
+                    break;
+                }
+            }
+            got_input = false;
+        } else if(app->show_stats) {
+            if(short_press && (input.key == InputKeyLeft || input.key == InputKeyBack ||
+                               input.key == InputKeyOk)) {
+                app->show_stats = false;
+            }
+            got_input = false;
+        } else if(short_press && input.key == InputKeyLeft) {
+            app->show_stats = true;
+            got_input = false;
+        }
+        bool have_event = got_input && map_input(&input, &event);
+
         uint32_t now = furi_hal_rtc_get_timestamp();
         PomodoroAlert alert = PomodoroAlertNone;
-        bool leave = false;
         if(have_event && event == PomodoroEventBack && pomodoro_has_session(&app->fsm)) {
-            /* Back during a session leaves the app; the session keeps going. */
-            leave = true;
+            /* Back during a session asks whether to keep tracking. */
+            app->exit_menu_open = true;
+            app->exit_choice = ExitChoiceContinue;
+            have_event = false;
+        } else if(stop_and_exit) {
+            /* Records any partial focus time in the stats and ends the
+             * session, so the saved session file is removed on exit. */
+            pomodoro_dispatch(&app->fsm, PomodoroEventStop, now);
         } else if(have_event) {
             PomodoroAlert a = pomodoro_dispatch(&app->fsm, event, now);
             if(a != PomodoroAlertNone) alert = a;
         }
         PomodoroAlert expired = pomodoro_catch_up(&app->fsm, now);
         if(expired != PomodoroAlertNone) alert = expired;
-        bool changed = (have_event && !leave) || alert != PomodoroAlertNone;
-        running = !leave && app->fsm.state != PomodoroStateExit;
+        bool changed = have_event || stop_and_exit || alert != PomodoroAlertNone;
+        running = !leave && !stop_and_exit && app->fsm.state != PomodoroStateExit;
         if(changed) pomodoro_storage_save(&app->fsm);
+        if(app->stats_dirty) {
+            pomodoro_storage_save_stats(&app->stats);
+            app->stats_dirty = false;
+        }
         furi_mutex_release(app->mutex);
 
         if(alert == PomodoroAlertFocus) {

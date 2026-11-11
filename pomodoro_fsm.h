@@ -47,6 +47,10 @@ typedef enum {
     PomodoroAlertBreak,
 } PomodoroAlert;
 
+/* Called whenever a stretch of focus ends: `seconds` actually focused (pauses
+ * excluded), `completed` if the interval ran to the end, `at` = when it ended. */
+typedef void (*PomodoroFocusCallback)(void* context, uint32_t seconds, bool completed, uint32_t at);
+
 /* All times are real-time-clock timestamps in seconds, so a session can be
  * saved, the app closed, and the countdown resumed later. */
 typedef struct {
@@ -56,9 +60,13 @@ typedef struct {
     uint8_t completed; /* focus intervals finished in this cycle */
     uint32_t end_time; /* when the running phase ends */
     uint32_t paused_remaining; /* seconds left while paused */
+    PomodoroFocusCallback focus_callback;
+    void* focus_context;
 } Pomodoro;
 
 void pomodoro_init(Pomodoro* p);
+
+void pomodoro_set_focus_callback(Pomodoro* p, PomodoroFocusCallback callback, void* context);
 
 /* The single place where state transitions happen. `now` is the RTC timestamp. */
 PomodoroAlert pomodoro_dispatch(Pomodoro* p, PomodoroEvent event, uint32_t now);

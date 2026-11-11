@@ -7,6 +7,9 @@
 #define SESSION_PATH    SESSION_DIR "/session.bin"
 #define SESSION_MAGIC   0x4D4F504FU /* "POMO" */
 #define SESSION_VERSION 1
+#define STATS_PATH      SESSION_DIR "/stats.bin"
+#define STATS_MAGIC     0x54534F50U /* "POST" */
+#define STATS_VERSION   1
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -28,14 +31,14 @@ bool pomodoro_storage_load(Pomodoro* p) {
     if(storage_file_open(file, SESSION_PATH, FSAM_READ, FSOM_OPEN_EXISTING) &&
        storage_file_read(file, &saved, sizeof(saved)) == sizeof(saved) &&
        saved.magic == SESSION_MAGIC && saved.version == SESSION_VERSION) {
-        Pomodoro session = {
-            .state = (PomodoroState)saved.state,
-            .paused_from = (PomodoroState)saved.paused_from,
-            .mode = (PomodoroMode)saved.mode,
-            .completed = saved.completed,
-            .end_time = saved.end_time,
-            .paused_remaining = saved.paused_remaining,
-        };
+        /* Start from `p` so its focus callback is kept. */
+        Pomodoro session = *p;
+        session.state = (PomodoroState)saved.state;
+        session.paused_from = (PomodoroState)saved.paused_from;
+        session.mode = (PomodoroMode)saved.mode;
+        session.completed = saved.completed;
+        session.end_time = saved.end_time;
+        session.paused_remaining = saved.paused_remaining;
         if(pomodoro_is_valid_session(&session)) {
             *p = session;
             loaded = true;
@@ -73,5 +76,38 @@ void pomodoro_storage_save(const Pomodoro* p) {
         storage_simply_remove(storage, SESSION_PATH);
     }
 
+    furi_record_close(RECORD_STORAGE);
+}
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint8_t version;
+    PomodoroStats stats;
+} SavedStats;
+
+void pomodoro_storage_load_stats(PomodoroStats* stats) {
+    pomodoro_stats_init(stats);
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    File* file = storage_file_alloc(storage);
+    SavedStats saved;
+    if(storage_file_open(file, STATS_PATH, FSAM_READ, FSOM_OPEN_EXISTING) &&
+       storage_file_read(file, &saved, sizeof(saved)) == sizeof(saved) &&
+       saved.magic == STATS_MAGIC && saved.version == STATS_VERSION) {
+        *stats = saved.stats;
+    }
+    storage_file_free(file);
+    furi_record_close(RECORD_STORAGE);
+}
+
+void pomodoro_storage_save_stats(const PomodoroStats* stats) {
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    storage_simply_mkdir(storage, EXT_PATH("apps_data"));
+    storage_simply_mkdir(storage, SESSION_DIR);
+    SavedStats saved = {.magic = STATS_MAGIC, .version = STATS_VERSION, .stats = *stats};
+    File* file = storage_file_alloc(storage);
+    if(storage_file_open(file, STATS_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        storage_file_write(file, &saved, sizeof(saved));
+    }
+    storage_file_free(file);
     furi_record_close(RECORD_STORAGE);
 }
