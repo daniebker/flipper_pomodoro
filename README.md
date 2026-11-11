@@ -12,7 +12,7 @@ A simple Pomodoro timer for the Flipper Zero. Pick a session length, then work i
 | Short | 25 min | 5 min       | 15 min                               |
 | Long  | 50 min | 10 min      | 30 min                               |
 
-When a phase ends, the screen lights up and the Flipper vibrates and beeps: two short beeps when focus starts, one longer tone when a break starts.
+Phases never start on their own. When a phase ends, the screen lights up, the Flipper vibrates and beeps (two short beeps when focus is up next, one longer tone when a break is), and the timer shows **Up next:** with the next phase's full time. Press OK to start it when you're ready.
 
 ## Controls
 
@@ -29,8 +29,8 @@ When a phase ends, the screen lights up and the Flipper vibrates and beeps: two 
 
 | Button | Action                                  |
 |--------|-----------------------------------------|
-| OK     | Pause / resume                          |
-| Right  | Skip to the next phase (counts as done) |
+| OK     | Pause / resume, or start the phase that's up next |
+| Right  | Skip to the next phase (counts as done); it waits for OK |
 | Left   | Open the stats page (the timer keeps running) |
 | Back   | Open the leave menu (see below)         |
 | Hold Back | Stop the session and return to the mode menu |
@@ -64,7 +64,7 @@ Pressing Back during a session opens a menu:
 - **Stop tracking & exit:** end the session and close the app. Any focus time so far is added to your stats.
 - Press **Back** again to return to the timer.
 
-If you choose Continue tracking, you can use other apps. When you reopen Pomodoro, the time you were away is deducted from the remaining time, so the countdown shows where the session really is. If you were away longer than the current phase, the app moves on through every phase that ended meanwhile (counting finished focus intervals and long breaks as usual).
+If you choose Continue tracking, you can use other apps. When you reopen Pomodoro, the time you were away is deducted from the remaining time, so the countdown shows where the session really is. If the current phase ended while you were away, it's counted as usual and the next phase is waiting for you to start it.
 
 - A **paused** session stays paused while the app is closed and loses no time.
 - The session is saved to `apps_data/pomodoro_app/session.bin` on the SD card and survives a restart.
@@ -90,12 +90,12 @@ In `pomodoro_fsm.c`, set `POMODORO_SECONDS_PER_MINUTE` to `1` so every "minute" 
 The app is driven by a finite state machine in `pomodoro_fsm.c`. All transitions happen in `pomodoro_dispatch()`; `pomodoro_app.c` only turns button presses into events, draws the current state and plays alerts.
 
 ```
-Select ──OK──▶ Focus ──done──▶ Short break ──done──▶ Focus …
-                 │                                      
-                 └─4th done──▶ Long break ──done──▶ Focus (cycle resets)
+Select ──OK──▶ Focus ──done──▶ Ready ──OK──▶ Short break ──done──▶ Ready ──OK──▶ Focus …
+                 │
+                 └─4th done──▶ Ready ──OK──▶ Long break ──done──▶ Ready ──OK──▶ Focus (cycle resets)
 
 Any timed phase ──OK──▶ Paused ──OK──▶ same phase
-Any timed phase / Paused ──hold Back──▶ Select ──Back──▶ Exit
+Any timed phase / Paused / Ready ──hold Back──▶ Select ──Back──▶ Exit
 ```
 
 Durations live in the `pomodoro_modes` table in `pomodoro_fsm.c` if you want to change them.

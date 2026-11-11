@@ -27,20 +27,22 @@ typedef enum {
     PomodoroStateShortBreak,
     PomodoroStateLongBreak,
     PomodoroStatePaused, /* any timed phase, frozen */
+    PomodoroStateReady, /* next timed phase, waiting for OK to start it */
     PomodoroStateExit,
 } PomodoroState;
 
 typedef enum {
     PomodoroEventPrev, /* menu: previous option */
     PomodoroEventNext, /* menu: next option */
-    PomodoroEventConfirm, /* menu: start; timer: pause/resume */
+    PomodoroEventConfirm, /* menu: start; timer: pause/resume/start next phase */
     PomodoroEventSkip, /* timer: end current phase now */
     PomodoroEventStop, /* timer: end the session, back to menu */
     PomodoroEventBack, /* menu: exit the app */
     PomodoroEventExpired, /* timer reached zero */
 } PomodoroEvent;
 
-/* What the UI should announce after a transition. */
+/* What the UI should announce after a transition: the phase that is now
+ * ready to be started. */
 typedef enum {
     PomodoroAlertNone,
     PomodoroAlertFocus,
@@ -55,7 +57,7 @@ typedef void (*PomodoroFocusCallback)(void* context, uint32_t seconds, bool comp
  * saved, the app closed, and the countdown resumed later. */
 typedef struct {
     PomodoroState state;
-    PomodoroState paused_from; /* phase to resume into */
+    PomodoroState paused_from; /* phase to resume into (or start, when Ready) */
     PomodoroMode mode;
     uint8_t completed; /* focus intervals finished in this cycle */
     uint32_t end_time; /* when the running phase ends */
@@ -71,8 +73,8 @@ void pomodoro_set_focus_callback(Pomodoro* p, PomodoroFocusCallback callback, vo
 /* The single place where state transitions happen. `now` is the RTC timestamp. */
 PomodoroAlert pomodoro_dispatch(Pomodoro* p, PomodoroEvent event, uint32_t now);
 
-/* Advance through every phase that has ended by `now` (e.g. while the app was
- * closed). Returns the alert for the last transition, or None. */
+/* If the running phase has ended by `now` (e.g. while the app was closed), move
+ * to Ready for the next phase. Returns the alert for that transition, or None. */
 PomodoroAlert pomodoro_catch_up(Pomodoro* p, uint32_t now);
 
 /* True while a timed phase is counting down (not paused). */
@@ -84,7 +86,7 @@ bool pomodoro_has_session(const Pomodoro* p);
 /* Sanity-check a session loaded from storage. */
 bool pomodoro_is_valid_session(const Pomodoro* p);
 
-/* The timed phase being shown, looking through Paused. */
+/* The timed phase being shown, looking through Paused and Ready. */
 PomodoroState pomodoro_phase(const Pomodoro* p);
 
 uint32_t pomodoro_remaining_seconds(const Pomodoro* p, uint32_t now);

@@ -23,7 +23,7 @@ typedef struct {
     NotificationApp* notifications;
 } PomodoroApp;
 
-/* Two beeps + buzz when focus begins, one long tone when a break begins. */
+/* Two beeps + buzz when focus is up next, one long tone when a break is. */
 static const NotificationSequence sequence_focus = {
     &message_display_backlight_on,
     &message_vibro_on,
@@ -112,9 +112,16 @@ static void draw_select(Canvas* canvas, const Pomodoro* p) {
 static void draw_timer(Canvas* canvas, const Pomodoro* p) {
     char buf[32];
     bool paused = p->state == PomodoroStatePaused;
+    bool ready = p->state == PomodoroStateReady;
 
     canvas_set_font(canvas, FontPrimary);
-    snprintf(buf, sizeof(buf), "%s%s", phase_title(pomodoro_phase(p)), paused ? " (paused)" : "");
+    snprintf(
+        buf,
+        sizeof(buf),
+        "%s%s%s",
+        ready ? "Up next: " : "",
+        phase_title(pomodoro_phase(p)),
+        paused ? " (paused)" : "");
     canvas_draw_str_aligned(canvas, 64, 0, AlignCenter, AlignTop, buf);
 
     uint32_t secs = pomodoro_remaining_seconds(p, furi_hal_rtc_get_timestamp());
@@ -139,7 +146,9 @@ static void draw_timer(Canvas* canvas, const Pomodoro* p) {
         64,
         AlignCenter,
         AlignBottom,
-        paused ? "OK resume  > skip  < stats" : "OK pause  > skip  < stats");
+        ready  ? "OK start  > skip  < stats" :
+        paused ? "OK resume  > skip  < stats" :
+                 "OK pause  > skip  < stats");
 }
 
 static void draw_exit_menu(Canvas* canvas, uint8_t choice) {
