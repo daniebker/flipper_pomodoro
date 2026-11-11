@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-11
+
 ### Changed
 
 - Breaks and focus intervals no longer start automatically. When a phase ends (or is skipped), the timer shows **Up next:** with the next phase and waits for OK to start it. While the app is closed, the session now stops at the end of the current phase instead of running through later ones.
@@ -49,7 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Vibration, sound and backlight alerts when focus or a break begins.
 - README and MIT license.
 
-[Unreleased]: https://github.com/daniebker/pomodoro_app/compare/v1.2.0...HEAD
-[1.2.0]: https://github.com/daniebker/pomodoro_app/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/daniebker/pomodoro_app/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/daniebker/pomodoro_app/releases/tag/v1.0.0
+[Unreleased]: https://github.com/daniebker/flipper_pomodoro/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/daniebker/flipper_pomodoro/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/daniebker/flipper_pomodoro/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/daniebker/flipper_pomodoro/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/daniebker/flipper_pomodoro/releases/tag/v1.0.0
