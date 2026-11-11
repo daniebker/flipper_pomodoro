@@ -1,9 +1,6 @@
 #include "pomodoro_fsm.h"
 
-#include <furi.h>
-
-/* Set to 1 at build time (e.g. temporarily edit here) to make every
- * "minute" last one second while testing. */
+/* Set to 1 to make every "minute" last one second while testing. */
 #ifndef POMODORO_SECONDS_PER_MINUTE
 #define POMODORO_SECONDS_PER_MINUTE 60
 #endif
@@ -13,7 +10,12 @@ const PomodoroModeConfig pomodoro_modes[PomodoroModeCount] = {
     [PomodoroModeLong] = {.label = "Long", .focus_min = 50, .break_min = 10, .long_break_min = 30},
 };
 
-static uint32_t phase_ticks(const Pomodoro* p, PomodoroState phase) {
+static bool is_timed_phase(PomodoroState s) {
+    return s == PomodoroStateFocus || s == PomodoroStateShortBreak ||
+           s == PomodoroStateLongBreak;
+}
+
+static uint32_t phase_seconds(const Pomodoro* p, PomodoroState phase) {
     const PomodoroModeConfig* cfg = &pomodoro_modes[p->mode];
     uint32_t minutes = 0;
     switch(phase) {
@@ -29,27 +31,27 @@ static uint32_t phase_ticks(const Pomodoro* p, PomodoroState phase) {
     default:
         break;
     }
-    return furi_ms_to_ticks(minutes * POMODORO_SECONDS_PER_MINUTE * 1000U);
+    return minutes * POMODORO_SECONDS_PER_MINUTE;
 }
 
-static void enter_phase(Pomodoro* p, PomodoroState phase, uint32_t now) {
+static void enter_phase(Pomodoro* p, PomodoroState phase, uint32_t start) {
     p->state = phase;
-    p->end_tick = now + phase_ticks(p, phase);
+    p->end_time = start + phase_seconds(p, phase);
 }
 
-/* Move from a finished (or skipped) phase to the next one. */
-static PomodoroAlert advance(Pomodoro* p, PomodoroState from, uint32_t now) {
+/* Move from a finished (or skipped) phase to the next one, starting at `start`. */
+static PomodoroAlert advance(Pomodoro* p, PomodoroState from, uint32_t start) {
     if(from == PomodoroStateFocus) {
         p->completed++;
         enter_phase(
             p,
             p->completed >= POMODORO_FOCUS_PER_CYCLE ? PomodoroStateLongBreak :
                                                        PomodoroStateShortBreak,
-            now);
+            start);
         return PomodoroAlertBreak;
     }
     if(from == PomodoroStateLongBreak) p->completed = 0;
-    enter_phase(p, PomodoroStateFocus, now);
+    enter_phase(p, PomodoroStateFocus, start);
     return PomodoroAlertFocus;
 }
 
@@ -58,19 +60,43 @@ void pomodoro_init(Pomodoro* p) {
 }
 
 bool pomodoro_is_running(const Pomodoro* p) {
-    return p->state == PomodoroStateFocus || p->state == PomodoroStateShortBreak ||
-           p->state == PomodoroStateLongBreak;
+    return is_timed_phase(p->state);
+}
+
+bool pomodoro_has_session(const Pomodoro* p) {
+    return pomodoro_is_running(p) || p->state == PomodoroStatePaused;
+}
+
+bool pomodoro_is_valid_session(const Pomodoro* p) {
+    if(p->mode >= PomodoroModeCount || p->completed > POMODORO_FOCUS_PER_CYCLE) return false;
+    if(pomodoro_is_running(p)) return true;
+    return p->state == PomodoroStatePaused && is_timed_phase(p->paused_from) &&
+           p->paused_remaining <= phase_seconds(p, p->paused_from);
 }
 
 PomodoroState pomodoro_phase(const Pomodoro* p) {
     return p->state == PomodoroStatePaused ? p->paused_from : p->state;
 }
 
-uint32_t pomodoro_remaining_ticks(const Pomodoro* p, uint32_t now) {
+uint32_t pomodoro_remaining_seconds(const Pomodoro* p, uint32_t now) {
     if(p->state == PomodoroStatePaused) return p->paused_remaining;
     if(!pomodoro_is_running(p)) return 0;
-    int32_t left = (int32_t)(p->end_tick - now);
+    int32_t left = (int32_t)(p->end_time - now);
     return left > 0 ? (uint32_t)left : 0;
+}
+
+PomodoroAlert pomodoro_catch_up(Pomodoro* p, uint32_t now) {
+    if(!pomodoro_is_running(p)) return PomodoroAlertNone;
+
+    /* If the clock was set backwards, don't show more time than a full phase. */
+    uint32_t duration = phase_seconds(p, p->state);
+    if(pomodoro_remaining_seconds(p, now) > duration) p->end_time = now + duration;
+
+    PomodoroAlert alert = PomodoroAlertNone;
+    while(pomodoro_is_running(p) && pomodoro_remaining_seconds(p, now) == 0) {
+        alert = pomodoro_dispatch(p, PomodoroEventExpired, now);
+    }
+    return alert;
 }
 
 PomodoroAlert pomodoro_dispatch(Pomodoro* p, PomodoroEvent event, uint32_t now) {
@@ -100,14 +126,17 @@ PomodoroAlert pomodoro_dispatch(Pomodoro* p, PomodoroEvent event, uint32_t now) 
     case PomodoroStateLongBreak:
         switch(event) {
         case PomodoroEventConfirm:
-            p->paused_remaining = pomodoro_remaining_ticks(p, now);
+            p->paused_remaining = pomodoro_remaining_seconds(p, now);
             p->paused_from = p->state;
             p->state = PomodoroStatePaused;
             break;
         case PomodoroEventSkip:
-        case PomodoroEventExpired:
             return advance(p, p->state, now);
-        case PomodoroEventBack:
+        case PomodoroEventExpired:
+            /* Chain from the scheduled end, not `now`, so catching up after the
+             * app was closed keeps every later phase on its real schedule. */
+            return advance(p, p->state, p->end_time);
+        case PomodoroEventStop:
             p->state = PomodoroStateSelect;
             break;
         default:
@@ -119,11 +148,11 @@ PomodoroAlert pomodoro_dispatch(Pomodoro* p, PomodoroEvent event, uint32_t now) 
         switch(event) {
         case PomodoroEventConfirm:
             p->state = p->paused_from;
-            p->end_tick = now + p->paused_remaining;
+            p->end_time = now + p->paused_remaining;
             break;
         case PomodoroEventSkip:
             return advance(p, p->paused_from, now);
-        case PomodoroEventBack:
+        case PomodoroEventStop:
             p->state = PomodoroStateSelect;
             break;
         default:

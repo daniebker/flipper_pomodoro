@@ -35,7 +35,8 @@ typedef enum {
     PomodoroEventNext, /* menu: next option */
     PomodoroEventConfirm, /* menu: start; timer: pause/resume */
     PomodoroEventSkip, /* timer: end current phase now */
-    PomodoroEventBack, /* timer: back to menu; menu: exit */
+    PomodoroEventStop, /* timer: end the session, back to menu */
+    PomodoroEventBack, /* menu: exit the app */
     PomodoroEventExpired, /* timer reached zero */
 } PomodoroEvent;
 
@@ -46,24 +47,36 @@ typedef enum {
     PomodoroAlertBreak,
 } PomodoroAlert;
 
+/* All times are real-time-clock timestamps in seconds, so a session can be
+ * saved, the app closed, and the countdown resumed later. */
 typedef struct {
     PomodoroState state;
     PomodoroState paused_from; /* phase to resume into */
     PomodoroMode mode;
     uint8_t completed; /* focus intervals finished in this cycle */
-    uint32_t end_tick; /* when the running phase ends */
-    uint32_t paused_remaining; /* ticks left while paused */
+    uint32_t end_time; /* when the running phase ends */
+    uint32_t paused_remaining; /* seconds left while paused */
 } Pomodoro;
 
 void pomodoro_init(Pomodoro* p);
 
-/* The single place where state transitions happen. `now` is furi_get_tick(). */
+/* The single place where state transitions happen. `now` is the RTC timestamp. */
 PomodoroAlert pomodoro_dispatch(Pomodoro* p, PomodoroEvent event, uint32_t now);
+
+/* Advance through every phase that has ended by `now` (e.g. while the app was
+ * closed). Returns the alert for the last transition, or None. */
+PomodoroAlert pomodoro_catch_up(Pomodoro* p, uint32_t now);
 
 /* True while a timed phase is counting down (not paused). */
 bool pomodoro_is_running(const Pomodoro* p);
 
+/* True if there is a session in progress (running or paused) worth saving. */
+bool pomodoro_has_session(const Pomodoro* p);
+
+/* Sanity-check a session loaded from storage. */
+bool pomodoro_is_valid_session(const Pomodoro* p);
+
 /* The timed phase being shown, looking through Paused. */
 PomodoroState pomodoro_phase(const Pomodoro* p);
 
-uint32_t pomodoro_remaining_ticks(const Pomodoro* p, uint32_t now);
+uint32_t pomodoro_remaining_seconds(const Pomodoro* p, uint32_t now);

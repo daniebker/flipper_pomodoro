@@ -2,9 +2,11 @@
 #include <gui/gui.h>
 #include <input/input.h>
 #include <notification/notification_messages.h>
+#include <furi_hal_rtc.h>
 #include <stdio.h>
 
 #include "pomodoro_fsm.h"
+#include "pomodoro_storage.h"
 
 typedef struct {
     Pomodoro fsm;
@@ -98,8 +100,7 @@ static void draw_timer(Canvas* canvas, const Pomodoro* p) {
     snprintf(buf, sizeof(buf), "%s%s", phase_title(pomodoro_phase(p)), paused ? " (paused)" : "");
     canvas_draw_str_aligned(canvas, 64, 0, AlignCenter, AlignTop, buf);
 
-    uint32_t freq = furi_kernel_get_tick_frequency();
-    uint32_t secs = (pomodoro_remaining_ticks(p, furi_get_tick()) + freq - 1) / freq;
+    uint32_t secs = pomodoro_remaining_seconds(p, furi_hal_rtc_get_timestamp());
     snprintf(buf, sizeof(buf), "%02lu:%02lu", secs / 60, secs % 60);
     canvas_set_font(canvas, FontBigNumbers);
     canvas_draw_str_aligned(canvas, 64, 27, AlignCenter, AlignCenter, buf);
@@ -121,7 +122,7 @@ static void draw_timer(Canvas* canvas, const Pomodoro* p) {
         64,
         AlignCenter,
         AlignBottom,
-        paused ? "OK resume  > skip  Back menu" : "OK pause  > skip  Back menu");
+        paused ? "OK resume  > skip  Back exit" : "OK pause  > skip  Back exit");
 }
 
 static void draw_callback(Canvas* canvas, void* ctx) {
@@ -142,6 +143,10 @@ static void input_callback(InputEvent* event, void* ctx) {
 }
 
 static bool map_input(const InputEvent* input, PomodoroEvent* out) {
+    if(input->type == InputTypeLong && input->key == InputKeyBack) {
+        *out = PomodoroEventStop; /* hold Back: end the session */
+        return true;
+    }
     if(input->type != InputTypeShort) return false;
     switch(input->key) {
     case InputKeyUp:
@@ -178,24 +183,39 @@ int32_t pomodoro_app_app(void* p) {
     gui_add_view_port(app->gui, app->view_port, GuiLayerFullscreen);
     app->notifications = furi_record_open(RECORD_NOTIFICATION);
 
+    /* Resume a saved session. Its phase end time is absolute, so the time the
+     * app spent closed is deducted from what was left; any phases that ended
+     * meanwhile are skipped through. */
+    if(pomodoro_storage_load(&app->fsm)) {
+        if(pomodoro_catch_up(&app->fsm, furi_hal_rtc_get_timestamp()) != PomodoroAlertNone) {
+            pomodoro_storage_save(&app->fsm);
+        }
+    }
+
     bool running = true;
     while(running) {
         InputEvent input;
         PomodoroEvent event;
         /* Wake at least every 250 ms to refresh the countdown and check expiry. */
-        bool have_event = furi_message_queue_get(app->input_queue, &input, 250) == FuriStatusOk &&
-                          map_input(&input, &event);
+        bool got_input = furi_message_queue_get(app->input_queue, &input, 250) == FuriStatusOk;
+        bool have_event = got_input && map_input(&input, &event);
 
         furi_mutex_acquire(app->mutex, FuriWaitForever);
-        uint32_t now = furi_get_tick();
+        uint32_t now = furi_hal_rtc_get_timestamp();
         PomodoroAlert alert = PomodoroAlertNone;
-        if(have_event) {
-            alert = pomodoro_dispatch(&app->fsm, event, now);
+        bool leave = false;
+        if(have_event && event == PomodoroEventBack && pomodoro_has_session(&app->fsm)) {
+            /* Back during a session leaves the app; the session keeps going. */
+            leave = true;
+        } else if(have_event) {
+            PomodoroAlert a = pomodoro_dispatch(&app->fsm, event, now);
+            if(a != PomodoroAlertNone) alert = a;
         }
-        if(pomodoro_is_running(&app->fsm) && pomodoro_remaining_ticks(&app->fsm, now) == 0) {
-            alert = pomodoro_dispatch(&app->fsm, PomodoroEventExpired, now);
-        }
-        running = app->fsm.state != PomodoroStateExit;
+        PomodoroAlert expired = pomodoro_catch_up(&app->fsm, now);
+        if(expired != PomodoroAlertNone) alert = expired;
+        bool changed = (have_event && !leave) || alert != PomodoroAlertNone;
+        running = !leave && app->fsm.state != PomodoroStateExit;
+        if(changed) pomodoro_storage_save(&app->fsm);
         furi_mutex_release(app->mutex);
 
         if(alert == PomodoroAlertFocus) {
@@ -205,6 +225,8 @@ int32_t pomodoro_app_app(void* p) {
         }
         view_port_update(app->view_port);
     }
+
+    pomodoro_storage_save(&app->fsm);
 
     view_port_enabled_set(app->view_port, false);
     gui_remove_view_port(app->gui, app->view_port);
